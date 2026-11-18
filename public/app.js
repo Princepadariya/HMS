@@ -168,7 +168,7 @@ store.set('erp.theme', null); // the app is light-only; forget any old choice
 
 // [key, label, permission(s), icon]
 const NAV = [
-  ['Overview', [['dashboard', 'Dashboard', 'reports', 'dashboard']]],
+  ['Overview', [['dashboard', 'Dashboard', 'reports', 'dashboard'], ['performance', 'Performance', 'reports', 'trend']]],
   ['Front office', [['frontdesk', 'Front desk', 'res', 'bell'], ['reservations', 'Reservations', 'res', 'calendar'], ['guests', 'Guests', 'res', 'users']]],
   ['Operations', [['housekeeping', 'Housekeeping', ['hk', 'rack'], 'sparkle'], ['maintenance', 'Maintenance', ['mt', 'hk', 'rack'], 'wrench'], ['pos', 'Restaurant POS', 'pos', 'utensils']]],
   ['Back office', [['inventory', 'Inventory', ['inv', 'po'], 'box'], ['purchasing', 'Purchasing', ['po', 'inv', 'acc'], 'cart'], ['accounts', 'Accounts & GST', ['acc', 'books'], 'rupee']]],
@@ -478,6 +478,82 @@ const money = (p, cls) => h('span', { class: cls }, rs(p));
 const balanceCell = r => money(r.balance, r.balance > 0 ? 'due' : r.balance < 0 ? 'gain' : 'muted');
 const STATUS = { booked: 'Booked', checked_in: 'In house', checked_out: 'Checked out', cancelled: 'Cancelled', no_show: 'No-show' };
 const tableLabel = t => (!t ? '' : /^\d+$/.test(t) ? `Table ${t}` : t);
+
+// ---------- group performance ----------
+// fixed colour per channel, so a channel never changes colour when another one has no bookings
+const CHANNELS = { website: ['Website (direct)', 'var(--c1)'], phone: ['Phone & central desk', 'var(--c2)'], walk_in: ['Walk-in', 'var(--c3)'], ota: ['OTAs', 'var(--c4)'] };
+const change = (cur, prev) => {
+  if (!prev) return h('small', { class: 'muted' }, 'no earlier data');
+  const r = (cur - prev) / prev;
+  return h('small', { class: r >= 0 ? 'gain' : 'due' }, `${r >= 0 ? '▲' : '▼'} ${Math.abs(r * 100).toFixed(1)}% vs previous`);
+};
+const changePts = (cur, prev, hasPrev) => {
+  if (!hasPrev) return h('small', { class: 'muted' }, 'no earlier data');
+  const d = (cur - prev) * 100;
+  return h('small', { class: d >= 0 ? 'gain' : 'due' }, `${d >= 0 ? '▲' : '▼'} ${Math.abs(d).toFixed(1)} pts vs previous`);
+};
+
+function forecastBars(f) {
+  const W = 300, H = 64, n = f.nights.length, gap = 2, bw = (W - gap * (n - 1)) / n;
+  let s = `<line x1="0" x2="${W}" y1="1" y2="1" stroke="var(--line)" stroke-dasharray="3 3"/>`;
+  f.nights.forEach((x, i) => {
+    const bh = Math.max(2, x.occupancy * (H - 4));
+    s += `<rect x="${(i * (bw + gap)).toFixed(1)}" y="${(H - bh).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="2" fill="var(--c1)" fill-opacity="${(0.35 + 0.65 * x.occupancy).toFixed(2)}">`
+      + `<title>${dayLabel(x.date)}: ${Math.round(x.occupancy * 100)}% booked (${x.sold} rooms)</title></rect>`;
+  });
+  return h('div', {}, svg(`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" role="img" aria-label="Rooms already booked for each of the next ${n} nights">${s}</svg>`),
+    h('div', { class: 'row muted small' }, dayLabel(f.nights[0].date), h('span', { class: 'spacer' }), '100% line dashed', h('span', { class: 'spacer' }), dayLabel(f.nights.at(-1).date)));
+}
+
+async function performance() {
+  const days = S.perfDays || 7;
+  const d = await api('GET', `/reports/group?days=${days}&${pq()}`);
+  const g = d.group, p = d.previous, many = d.hotels.length > 1;
+  const channels = Object.keys(CHANNELS).map(k => d.channels.find(c => c.channel === k) || { channel: k, bookings: 0, room_nights: 0, revenue: 0, share: 0 });
+  return h('div', {},
+    pageHead(many ? 'Group performance' : 'Hotel performance', `${scopeName()} · last ${days} closed days (${dayLabel(d.from)} – ${dayLabel(d.to)}) compared with the ${days} days before`,
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Period' }, [7, 30, 90].map(n => h('button', { class: n === days ? 'on' : '', onclick: () => { S.perfDays = n; render(); } }, `${n} days`)))),
+    statStrip([
+      ['Occupancy', pct(g.occupancy), changePts(g.occupancy, p.occupancy, p.room_nights > 0), 'bed', 'indigo'],
+      ['ADR', rs(g.adr), change(g.adr, p.adr), 'trend', 'teal'],
+      ['RevPAR', rs(g.revpar), change(g.revpar, p.revpar), 'trend', 'violet'],
+      ['Room revenue', short(g.room_revenue), change(g.room_revenue, p.room_revenue), 'rupee', 'green'],
+      ['On the books · 30 days', short(d.forecast.revenue), `${pct(d.forecast.next30)} already booked`, 'calendar', 'amber'],
+      ['OTA commission saved', short(d.ota_commission_saved), `${pct(d.direct_share)} of revenue booked direct (est. ${Math.round(d.ota_commission_rate * 100)}%)`, 'wallet', 'pink'],
+    ]),
+
+    many && panel('Hotel league table', h('span', { class: 'muted' }, 'ranked by RevPAR'),
+      table([
+        ['#', x => h('span', { class: `chip-tag ${x.rank === 1 ? 'amber' : ''}` }, x.rank === 1 ? '★ 1' : x.rank)],
+        ['Hotel', x => h('div', {}, h('strong', {}, x.name), h('small', { class: 'muted', style: 'display:block' }, `${x.rooms} rooms`))],
+        ['Occupancy', x => h('div', { class: 'num' }, h('b', {}, pct(x.occupancy)), h('div', {}, changePts(x.occupancy, x.prev.occupancy, x.prev.room_nights > 0))), { num: 1 }],
+        ['ADR', x => h('div', { class: 'num' }, h('b', {}, rs(x.adr)), h('div', {}, change(x.adr, x.prev.adr))), { num: 1 }],
+        ['RevPAR', x => h('div', { class: 'num' }, h('b', {}, rs(x.revpar)), h('div', {}, change(x.revpar, x.prev.revpar))), { num: 1 }],
+        ['Room revenue', x => h('div', { class: 'num' }, h('b', {}, short(x.room_revenue)), h('div', {}, change(x.room_revenue, x.prev.room_revenue))), { num: 1 }],
+        ['F&B', x => short(x.fnb_revenue), { num: 1 }],
+        ['Collected', x => short(x.collected), { num: 1 }],
+      ], d.hotels)),
+
+    h('div', { class: 'section-title' }, 'On the books · next 30 nights', h('span', { class: 'dot' })),
+    h('div', { class: 'forecast-grid' }, d.hotels.map(x => h('div', { class: 'card forecast' },
+      h('div', { class: 'row' }, h('strong', {}, x.name), h('span', { class: 'spacer' }), h('span', { class: 'tag' }, `${x.forecast.room_nights} room nights`)),
+      h('div', { class: 'fc-stats' },
+        h('div', {}, h('small', {}, 'Next 7 nights'), h('b', {}, pct(x.forecast.next7))),
+        h('div', {}, h('small', {}, 'Next 30 nights'), h('b', {}, pct(x.forecast.next30))),
+        h('div', {}, h('small', {}, 'Room revenue booked'), h('b', {}, short(x.forecast.revenue)))),
+      forecastBars(x.forecast)))),
+
+    panel('Where bookings come from', h('span', { class: 'muted' }, `stays arriving ${dayLabel(d.from)} – ${dayLabel(d.to)}`),
+      h('div', { class: 'mix-bar', role: 'img', 'aria-label': 'Share of room revenue by channel' },
+        channels.filter(c => c.share > 0).map(c => h('span', { style: `width:${(c.share * 100).toFixed(2)}%;background:${CHANNELS[c.channel][1]}`, title: `${CHANNELS[c.channel][0]}: ${pct(c.share)}` }))),
+      table([
+        ['Channel', c => h('span', { class: 'row', style: 'gap:8px;flex-wrap:nowrap' }, h('i', { class: 'swatch', style: `background:${CHANNELS[c.channel][1]}` }), CHANNELS[c.channel][0])],
+        ['Bookings', 'bookings', { num: 1 }], ['Room nights', 'room_nights', { num: 1 }],
+        ['Room revenue', c => short(c.revenue), { num: 1 }], ['Share', c => h('b', {}, pct(c.share)), { num: 1 }],
+      ], channels)),
+    h('p', { class: 'muted small' }, `Revenue is before GST. "On the books" counts bookings already made (booked or in house) at their booked rates. `
+      + `OTA commission saved is an estimate: direct room revenue × ${Math.round(d.ota_commission_rate * 100)}%.`));
+}
 
 // ---------- front desk ----------
 const resLink = r => h('a', { href: '#/res/' + r.id }, r.code);
@@ -1243,7 +1319,7 @@ async function auditLog() {
 }
 
 const VIEWS = {
-  dashboard, frontdesk, reservations, booking, res, invoice, guests, guest, housekeeping, maintenance, pos, order, inventory, purchasing,
+  dashboard, performance, frontdesk, reservations, booking, res, invoice, guests, guest, housekeeping, maintenance, pos, order, inventory, purchasing,
   accounts, 'night-audit': nightAudit, setup, 'audit-log': auditLog,
 };
 boot();

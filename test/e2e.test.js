@@ -51,6 +51,26 @@ test('seeded history: books balance and the dashboard has real numbers', async (
   assert.ok(pending.length >= 1);
 });
 
+test('group performance: league, on-the-books forecast and channel mix', async () => {
+  const g = await call('owner', 'GET', '/reports/group?days=30');
+  assert.equal(g.hotels.length, 2);
+  assert.deepEqual(g.hotels.map(h => h.rank), [1, 2]);
+  assert.ok(g.hotels[0].revpar >= g.hotels[1].revpar, 'league is ranked by RevPAR');
+  assert.ok(g.group.room_revenue > 0 && g.previous !== undefined);
+  for (const h of g.hotels) {
+    assert.equal(h.forecast.nights.length, 30);
+    assert.ok(h.forecast.nights.every(n => n.occupancy >= 0 && n.occupancy <= 1 && n.sold <= h.rooms));
+    assert.ok(h.forecast.room_nights > 0, 'seeded future bookings appear on the books');
+  }
+  assert.ok(Math.abs(g.channels.reduce((s, c) => s + c.share, 0) - 1) < 1e-9, 'channel shares add up to 100%');
+  assert.ok(g.channels.every(c => ['website', 'ota', 'phone', 'walk_in'].includes(c.channel)));
+  const direct = g.channels.filter(c => c.channel !== 'ota').reduce((s, c) => s + c.revenue, 0);
+  assert.equal(g.ota_commission_saved, Math.round(direct * g.ota_commission_rate));
+  // a GM sees only their hotel; front desk has no reports
+  assert.equal((await call('gm.amd', 'GET', '/reports/group')).hotels.length, 1);
+  await rejects(call('desk.amd', 'GET', '/reports/group'), 403);
+});
+
 test('restaurant tables are set per hotel and only an admin can change them', async () => {
   const me = await call('owner', 'GET', '/me');
   assert.ok(me.perms.includes('admin'), 'the owner screen must show admin-only setup');

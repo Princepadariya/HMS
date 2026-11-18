@@ -96,5 +96,14 @@
   `.env.example`. Mobile tab bar + role gating also done (see entry above).
 - Verified: `npm test` 9/9 (tests use a temp DB file); local app works on the existing data; upload rehearsed against a local stand-in (37,231 rows,
   second run refuses); the Vercel function file served login, dashboard and trial balance from the uploaded copy.
-- Not verified: a real Turso database or a real Vercel deploy (needs the owner's accounts). Foreign-key enforcement on Turso connections is not guaranteed;
+- Live on Vercel (hms-psi-seven.vercel.app) with Turso; routing fixed to one `api/index.js` + rewrite; `/api/health` added.
+
+## 2026-11-18 - light theme only + Group performance
+- Dark mode and its switch removed.
+- New **Performance** screen (`GET /api/reports/group`): headline KPIs vs the previous period, hotel league table ranked by RevPAR, 30-night
+  on-the-books forecast per hotel, channel mix (website / phone+central / walk-in / OTA) with direct share and estimated OTA commission saved
+  (18% assumption, `OTA_COMMISSION` in server/api.js). Defaults to 7 days so comparisons have data; "no earlier data" when the previous period is empty.
+- Verified: `npm test` 10/10 (new test checks ranking, forecast bounds, shares = 100%, commission maths, GM scoping, front-desk 403);
+  browser desktop + 375px phone.
+- Earlier note "Not verified: a real Turso database or a real Vercel deploy" no longer applies. Foreign-key enforcement on Turso connections is not guaranteed;
   the app validates references itself.

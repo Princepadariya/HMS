@@ -273,6 +273,16 @@ code.clip { display: inline-block; max-width: 420px; overflow: hidden; text-over
 .hero .actions button:hover { background: rgb(255 255 255 / .24); }
 .hero .actions button.solid { background: #fff; color: #4338ca; border-color: #fff; }
 
+/* ---------- group performance ---------- */
+.forecast-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-bottom: 16px; }
+.forecast { margin: 0; display: grid; gap: 12px; }
+.fc-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.fc-stats small { display: block; color: var(--muted); font-size: 12px; }
+.fc-stats b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.mix-bar { display: flex; gap: 2px; height: 14px; border-radius: 999px; overflow: hidden; background: var(--line-2); }
+.mix-bar span { display: block; height: 100%; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; display: inline-block; }
+
 /* ---------- restaurant POS ---------- */
 .tables { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
 .table-tile { all: unset; box-sizing: border-box; cursor: pointer; display: grid; gap: 2px; align-content: start; min-height: 92px; padding: 12px; border-radius: 12px;

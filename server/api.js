@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import {
-  route, err, has, permsOf, PERMS, hashPassword, checkPassword, need, paise, date, isDate, addDays, nightsBetween, tx, prop, audit,
+  route, err, has, permsOf, PERMS, hashPassword, checkPassword, need, paise, date, isDate, addDays, diffDays, nightsBetween, tx, prop, audit,
   post, taxRateFor, roomTaxRate, addCharge, addPayment, balanceOf, issueInvoice, nightlyPrices, available, createReservation, INITIAL_PASSWORD,
 } from './core.js';
 
@@ -766,6 +766,82 @@ route('GET', '/api/reports/dashboard', 'reports', async c => {
   const daily = nightsBetween(from, addDays(to, 1)).map(d => ({ date: d, room_revenue: rev[d]?.room || 0, fnb_revenue: rev[d]?.fnb || 0, other_revenue: rev[d]?.extra || 0,
     room_nights: nightsSold[d] || 0, occupancy: group.rooms ? (nightsSold[d] || 0) / group.rooms : 0, collected: paid[d] || 0 }));
   return { from, to, properties: list, group, daily, payments_by_mode };
+});
+
+// ---------- group performance ----------
+const OTA_COMMISSION = 0.18; // shortcut: assumed typical OTA commission for the "saved" estimate; make it a setting if rates are negotiated per OTA
+const CHANNEL = { website: 'website', ota: 'ota', phone: 'phone', central: 'phone', walk_in: 'walk_in' }; // phone + central desk shown together
+
+// Room nights and revenue already booked for the next `n` nights, night by night.
+async function forecast(db, p, n) {
+  const start = p.business_date, end = addDays(start, n);
+  const [rooms, rows] = await Promise.all([
+    db.prepare('SELECT COUNT(*) n FROM rooms WHERE property_id=?').get(p.id).then(r => r.n),
+    db.prepare(`SELECT arrival, departure, rates_json FROM reservations WHERE property_id=? AND status IN ('booked','checked_in') AND arrival < ? AND departure > ?`).all(p.id, end, start),
+  ]);
+  const nights = nightsBetween(start, end).map(d => {
+    let sold = 0, revenue = 0;
+    for (const r of rows) {
+      if (!(r.arrival <= d && r.departure > d)) continue;
+      const rates = JSON.parse(r.rates_json);
+      sold++;
+      revenue += rates[Math.min(diffDays(r.arrival, d), rates.length - 1)];
+    }
+    return { date: d, sold, revenue, occupancy: rooms ? sold / rooms : 0 };
+  });
+  const avg = k => (k ? nights.slice(0, k).reduce((s, x) => s + x.occupancy, 0) / k : 0);
+  return { rooms, nights, next7: avg(7), next30: avg(n), room_nights: nights.reduce((s, x) => s + x.sold, 0), revenue: nights.reduce((s, x) => s + x.revenue, 0) };
+}
+
+route('GET', '/api/reports/group', 'reports', async c => {
+  const pid = await pidAll(c);
+  const props = pid ? [await prop(c.db, pid)] : await c.db.prepare('SELECT * FROM properties ORDER BY id').all();
+  const days = [7, 30, 90].includes(Number(c.query.days)) ? Number(c.query.days) : 30;
+  const pick = k => ({ occupancy: k.occupancy, adr: k.adr, revpar: k.revpar, room_revenue: k.room_revenue, fnb_revenue: k.fnb_revenue,
+    other_revenue: k.other_revenue, collected: k.collected, room_nights: k.room_nights, rooms: k.rooms });
+  // each hotel is measured over its own last closed days, against the same number of days before that
+  const hotels = await Promise.all(props.map(async p => {
+    const to = addDays(p.business_date, -1), from = addDays(to, -(days - 1));
+    const pto = addDays(from, -1), pfrom = addDays(pto, -(days - 1));
+    const [cur, prev, fc] = await Promise.all([kpis(c.db, p, from, to), kpis(c.db, p, pfrom, pto), forecast(c.db, p, 30)]);
+    return { property_id: p.id, code: p.code, name: p.name, from, to, ...pick(cur), prev: pick(prev), forecast: fc };
+  }));
+  hotels.sort((a, b) => b.revpar - a.revpar).forEach((h, i) => { h.rank = i + 1; });
+
+  const total = (list, side) => {
+    const s = k => list.reduce((t, h) => t + (side ? h[side][k] : h[k]), 0);
+    const cap = s('rooms') * days, rev = s('room_revenue'), sold = s('room_nights');
+    return { rooms: s('rooms'), room_nights: sold, occupancy: cap ? sold / cap : 0, adr: sold ? Math.round(rev / sold) : 0, revpar: cap ? Math.round(rev / cap) : 0,
+      room_revenue: rev, fnb_revenue: s('fnb_revenue'), other_revenue: s('other_revenue'), collected: s('collected') };
+  };
+
+  // channel mix: stays arriving in the period, by booking source
+  const from = hotels.reduce((m, h) => (h.from < m ? h.from : m), hotels[0].from), to = hotels.reduce((m, h) => (h.to > m ? h.to : m), hotels[0].to);
+  const stays = await c.db.prepare(`SELECT source, arrival, departure, rates_json FROM reservations
+    WHERE property_id IN (${inList(props.length)}) AND arrival BETWEEN ? AND ? AND status NOT IN ('cancelled','no_show')`).all(...props.map(p => p.id), from, to);
+  const channels = {};
+  for (const r of stays) {
+    const k = CHANNEL[r.source] || r.source;
+    const ch = (channels[k] ||= { channel: k, bookings: 0, room_nights: 0, revenue: 0 });
+    const rates = JSON.parse(r.rates_json);
+    ch.bookings++;
+    ch.room_nights += rates.length;
+    ch.revenue += rates.reduce((s, x) => s + x, 0);
+  }
+  const channelList = Object.values(channels);
+  const allRevenue = channelList.reduce((s, x) => s + x.revenue, 0);
+  const direct = channelList.filter(x => x.channel !== 'ota').reduce((s, x) => s + x.revenue, 0);
+  channelList.forEach(x => { x.share = allRevenue ? x.revenue / allRevenue : 0; });
+
+  return {
+    days, from, to, hotels, channels: channelList,
+    group: total(hotels), previous: total(hotels, 'prev'),
+    forecast: { revenue: hotels.reduce((s, h) => s + h.forecast.revenue, 0), room_nights: hotels.reduce((s, h) => s + h.forecast.room_nights, 0),
+      next7: hotels.reduce((s, h) => s + h.forecast.next7 * h.forecast.rooms, 0) / Math.max(1, hotels.reduce((s, h) => s + h.forecast.rooms, 0)),
+      next30: hotels.reduce((s, h) => s + h.forecast.next30 * h.forecast.rooms, 0) / Math.max(1, hotels.reduce((s, h) => s + h.forecast.rooms, 0)) },
+    direct_share: allRevenue ? direct / allRevenue : 0,
+    ota_commission_saved: Math.round(direct * OTA_COMMISSION), ota_commission_rate: OTA_COMMISSION,
+  };
 });
 
 // ---------- night audit ----------
