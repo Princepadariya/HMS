@@ -34,8 +34,12 @@ Vercel keeps no files between requests, so the live database is Turso (hosted SQ
    if real staff will use it. Pick the function region nearest your Turso database (Settings → Functions). Deploy.
 4. Open the Vercel URL: staff app at `/`, booking site at `/book`. Change every starter password in **Setup → Users**.
 
-How it fits together: `public/` is served as static files; `api/[...path].js` is the only serverless function and reuses
-`server/` (same code as `npm start`); `vercel.json` adds the security headers and the `/book` address.
+How it fits together: `public/` is served as static files; `vercel.json` sends every `/api/...` request to the one
+serverless function `api/index.js`, which reuses `server/` (same code as `npm start`), and adds the security headers and `/book`.
+
+**Check the live database connection:** open `https://<your-app>.vercel.app/api/health`. It shows `"database": "connected"`,
+or says in plain words what is wrong (missing variable, dashboard link instead of the `libsql://` URL, rejected token).
+After changing a variable in Vercel, redeploy for it to take effect.
 
 ## Test
 ```bash
