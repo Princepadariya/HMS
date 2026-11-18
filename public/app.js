@@ -178,7 +178,6 @@ const NAV = [
 const NAV_ITEMS = NAV.flatMap(([, items]) => items);
 const SUB = { res: ['Reservation', 'reservations'], booking: ['New booking', 'reservations'], guest: ['Guest profile', 'guests'], order: ['Order', 'pos'], invoice: ['Tax invoice', 'accounts'] };
 const SUB_PERM = { res: 'res', booking: 'res', guest: 'res', order: 'pos', invoice: ['res', 'pos', 'acc', 'books'] };
-const TAB_LABEL = { 'Restaurant POS': 'POS', 'Accounts & GST': 'Accounts', Reservations: 'Bookings', Housekeeping: 'Rooms', 'Night audit': 'Audit', Maintenance: 'Repairs' };
 const brand = () => h('div', { class: 'brand' }, h('span', { class: 'logo' }, icon('building')), h('span', {}, 'Grand Residency', h('small', {}, 'Hotel ERP')));
 
 document.addEventListener('click', () => document.querySelectorAll('.menu-wrap.open, .search.open').forEach(x => x.classList.remove('open')));
@@ -221,9 +220,6 @@ async function boot() {
   const hotel = u.property_id ? h('span', { class: 'hotel' }, curProp().name)
     : h('select', { class: 'hotel', 'aria-label': 'Hotel', style: 'width:auto;padding:5px 9px', onchange: e => { const v = e.target.value; S.all = v === 'all'; if (!S.all) S.pid = Number(v); store.set('erp.pid', v); render(); } },
       h('option', { value: 'all', selected: S.all }, 'All hotels'), S.me.properties.map(p => h('option', { value: p.id, selected: !S.all && p.id === S.pid }, p.name)));
-  const tabbar = () => h('nav', { class: 'tabbar', 'aria-label': 'Main' },
-    NAV_ITEMS.filter(i => can(i[2])).slice(0, 4).map(([k, l, , ic]) => h('a', { href: '#/' + k, 'data-k': k }, icon(ic), h('span', {}, TAB_LABEL[l] || l))),
-    h('button', { type: 'button', onclick: () => document.querySelector('.shell').classList.add('nav-open') }, icon('bars'), h('span', {}, 'Menu')));
   const signOut = async () => { await api('POST', '/logout').catch(() => {}); S.token = null; store.set('erp.token', null); location.hash = ''; boot(); };
   const menu = h('div', { class: 'menu-wrap' },
     h('button', { class: 'iconbtn', 'aria-label': 'Account menu', onclick: e => { e.stopPropagation(); menu.classList.toggle('open'); } }, h('span', { class: 'avatar' }, initials(u.name))),
@@ -238,7 +234,6 @@ async function boot() {
         h('a', { href: '#', onclick: e => { e.preventDefault(); act(signOut)(); } }, icon('logout'), h('span', {}, 'Sign out'))),
       h('div', { class: 'foot' }, h('span', { class: 'avatar' }, initials(u.name)), h('div', { class: 'who' }, h('strong', {}, u.name), h('span', { class: 'muted', style: 'text-transform:capitalize' }, role)))),
     h('div', { class: 'scrim', onclick: () => document.querySelector('.shell').classList.remove('nav-open') }),
-    tabbar(),
     h('div', {},
       h('header', { class: 'top' },
         h('button', { class: 'iconbtn', id: 'collapse', 'aria-label': 'Menu', onclick: () => {
@@ -305,7 +300,7 @@ async function render() {
   const view = ok ? name : allowed[0]?.[0]; // anything the role can't use falls back to its home screen
   const navKey = SUB[view]?.[1] || view;
   document.querySelector('.shell')?.classList.remove('nav-open');
-  document.querySelectorAll('.side nav a, .tabbar a').forEach(a => a.classList.toggle('active', a.dataset.k === navKey));
+  document.querySelectorAll('.side nav a').forEach(a => a.classList.toggle('active', a.dataset.k === navKey));
   document.getElementById('crumb').textContent = NAV_ITEMS.find(n => n[0] === view)?.[1] || SUB[view]?.[0] || '';
   const p = curProp();
   document.getElementById('bd').textContent = S.all ? `${S.me.properties.length} hotels` : p ? `Business date · ${dayLabel(p.business_date)}` : '';
@@ -559,7 +554,21 @@ async function performance() {
 // ---------- room calendar (tape chart) ----------
 const weekday = d => new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short' });
 const isWeekend = d => [0, 6].includes(new Date(d + 'T00:00:00').getDay());
-const STAY = { checked_in: 'In house', checked_out: 'Checked out' };
+const STAY = { booked: 'Booked', checked_in: 'In house', checked_out: 'Checked out' };
+// Pick (or change) the room for a booking that is not checked in yet.
+async function assignDialog(s, typeName) {
+  const rooms = await api('GET', `/reservations/${s.id}/rooms`);
+  const save = roomId => act(async () => { await api('POST', `/reservations/${s.id}/assign`, { room_id: roomId }); d.close(); flash(roomId ? `Room ${rooms.find(r => r.id === roomId).number} assigned to ${s.guest_name}` : 'Room removed'); render(); });
+  const d = modal(s.room_id ? `Move ${s.guest_name}` : `Assign a room · ${s.guest_name}`, [
+    h('p', { class: 'muted', style: 'margin-top:0' }, `${s.code} · ${typeName} · ${dayLabel(s.arrival)} → ${dayLabel(s.departure)} (${nights(s.arrival, s.departure)} nights)`),
+    rooms.length ? h('div', { class: 'assign-grid' }, rooms.map(r => h('button', { type: 'button', class: `assign-room${r.id === s.room_id ? ' on' : ''}`, onclick: r.id === s.room_id ? null : save(r.id) },
+      h('b', {}, r.number), h('small', {}, r.id === s.room_id ? 'current' : r.status === 'occupied' ? 'guest leaving first' : r.hk_status))))
+      : h('p', { class: 'error' }, 'No room of this type is free for every night of this stay.'),
+    h('div', { class: 'row', style: 'margin-top:14px' }, s.room_id && h('button', { class: 'ghost small', onclick: save(null) }, 'Remove room'), h('span', { class: 'spacer' }),
+      h('a', { class: 'btn ghost small', href: '#/res/' + s.id, onclick: () => d.close() }, 'Open booking'))]);
+}
+// Stack overlapping bookings into as few lanes as possible.
+const lanes = list => { const out = []; for (const s of list) { const lane = out.find(l => l.at(-1).departure <= s.arrival); lane ? lane.push(s) : out.push([s]); } return out; };
 
 async function roomCalendar() {
   const p = curProp();
@@ -580,6 +589,15 @@ async function roomCalendar() {
     h('div', { class: 'tc-room' }, 'Room'),
     d.nights.map((n, i) => dayCell(n, i, '', [h('small', {}, weekday(n)), h('b', {}, new Date(n + 'T00:00:00').getDate())])));
 
+  const bar = (s, t) => {
+    const start = s.arrival < d.from ? d.from : s.arrival, end = s.departure > d.to ? d.to : s.departure;
+    const col = nights(d.from, start) + 2, span = Math.max(1, nights(start, end));
+    const cls = `tc-bar ${s.room_id ? s.status : 'unassigned'}${s.arrival < d.from ? ' cut-l' : ''}${s.departure > d.to ? ' cut-r' : ''}`;
+    const title = `${s.guest_name} · ${s.room_id ? STAY[s.status] : 'Needs a room'} · ${dayLabel(s.arrival)} → ${dayLabel(s.departure)} · ${s.code}`;
+    const opens = s.status === 'booked' && can('res'); // not checked in yet: choose or change the room
+    return h('a', { class: cls, href: can('res') ? '#/res/' + s.id : null, style: `grid-column:${col} / span ${span}`, title,
+      onclick: opens ? e => { e.preventDefault(); assignDialog(s, t.name).catch(er => flash(er.message, true)); } : null }, h('span', {}, s.guest_name));
+  };
   const groups = d.types.filter(t => !typeFilter || String(t.id) === typeFilter).map(t => {
     const typeRow = h('div', { class: 'tc-row tc-type', style: cols },
       h('div', { class: 'tc-room' }, h('strong', {}, t.name), h('small', {}, `${t.rooms} rooms`)),
@@ -590,21 +608,16 @@ async function roomCalendar() {
           ? h('a', { href: `#/booking?arrival=${n}`, 'aria-label': `New booking arriving ${dayLabel(n)}, ${free} ${t.name} free` }, label) : label]);
       }));
     const roomRows = d.rooms.filter(r => r.room_type_id === t.id).map(r => {
-      const bars = d.stays.filter(s => s.room_id === r.id).map(s => {
-        const start = s.arrival < d.from ? d.from : s.arrival, end = s.departure > d.to ? d.to : s.departure;
-        const col = nights(d.from, start) + 2, span = Math.max(1, nights(start, end));
-        const clippedL = s.arrival < d.from, clippedR = s.departure > d.to;
-        return h('a', { class: `tc-bar ${s.status}${clippedL ? ' cut-l' : ''}${clippedR ? ' cut-r' : ''}`, href: can('res') ? '#/res/' + s.id : null,
-          style: `grid-column:${col} / span ${span}`, title: `${s.guest_name} · ${STAY[s.status]} · ${dayLabel(s.arrival)} → ${dayLabel(s.departure)} · ${s.code}` },
-        h('span', {}, s.guest_name));
-      });
+      const bars = d.stays.filter(s => s.room_id === r.id).map(s => bar(s, t));
       return h('div', { class: `tc-row${r.status === 'out_of_order' ? ' ooo' : ''}`, style: cols },
         h('div', { class: 'tc-room' }, h('strong', {}, r.number),
           h('span', { class: `hk-dot ${r.hk_status}`, title: `Housekeeping: ${r.hk_status}` }),
           r.status === 'out_of_order' && h('span', { class: 'tag bad' }, 'OOO')),
         d.nights.map((n, i) => dayCell(n, i)), bars);
     });
-    return [typeRow, ...roomRows];
+    const waiting = lanes(d.unassigned.filter(s => s.room_type_id === t.id)).map((lane, i) => h('div', { class: 'tc-row tc-waiting', style: cols },
+      h('div', { class: 'tc-room' }, i === 0 ? h('span', { class: 'tag warn' }, 'To assign') : null), d.nights.map((n, j) => dayCell(n, j)), lane.map(s => bar(s, t))));
+    return [typeRow, ...waiting, ...roomRows];
   });
 
   return h('div', {},
@@ -623,7 +636,12 @@ async function roomCalendar() {
     h('div', { class: 'toolbar' },
       pills([['', 'All room types'], ...d.types.map(t => [String(t.id), t.name])], typeFilter, k => setQs('#/calendar', { type: k })),
       h('span', { class: 'spacer' }),
-      h('div', { class: 'legend' }, h('span', {}, h('i', { style: 'background:var(--accent)' }), 'In house'), h('span', {}, h('i', { style: 'background:#cbd5e1' }), 'Checked out'),
+      can('res') && d.unassigned.length > 0 && h('button', { class: 'small', onclick: act(async () => {
+        const r = await api('POST', '/calendar/auto-assign', { property_id: p.id, from: d.business_date > d.from ? d.business_date : d.from, to: d.to });
+        flash(r.assigned ? `Assigned rooms to ${r.assigned} booking${r.assigned === 1 ? '' : 's'}${r.unassigned ? ` · ${r.unassigned} still waiting (no free room)` : ''}` : 'No free rooms to assign', !r.assigned); render();
+      }) }, icon('sparkle'), `Auto-assign ${d.unassigned.filter(s => s.arrival >= d.business_date).length} waiting`),
+      h('div', { class: 'legend' }, h('span', {}, h('i', { style: 'background:var(--warn)' }), 'Booked'), h('span', {}, h('i', { class: 'todo-swatch' }), 'Needs a room'),
+        h('span', {}, h('i', { style: 'background:var(--accent)' }), 'In house'), h('span', {}, h('i', { style: 'background:#cbd5e1' }), 'Checked out'),
         h('span', {}, h('i', { class: 'ooo-swatch' }), 'Out of order'), h('span', {}, h('i', { style: 'background:var(--warn-bg);border:1px solid var(--warn)' }), 'Today'))),
     h('section', { class: 'panel' },
       h('div', { class: 'tc-wrap' }, h('div', { class: 'tc' }, head, groups))),
@@ -774,10 +792,12 @@ async function res(id) {
 
   const actions = [];
   if (r.status === 'booked') {
-    const rooms = (await api('GET', `/housekeeping?property_id=${r.property_id}`)).filter(x => x.room_type === r.room_type && x.status === 'available' && x.hk_status !== 'dirty');
+    // free for the whole stay (not reserved for anyone else), and ready now: vacant and not dirty
+    const rooms = (await api('GET', `/reservations/${id}/rooms`)).filter(x => x.status === 'available' && (x.hk_status !== 'dirty' || x.id === r.room_id));
     actions.push(panel('Check in', h('span', { class: 'muted' }, `${rooms.length} ready ${r.room_type}`),
       r.arrival > r.business_date ? h('p', { class: 'muted', style: 'margin:0' }, `Arrival is ${dayLabel(r.arrival)}; check-in opens on that business date.`) :
-        form([{ name: 'room_id', label: 'Room', required: true, options: [['', 'Choose…'], ...rooms.map(x => [x.id, `${x.number} (${x.hk_status})`])] },
+        form([{ name: 'room_id', label: r.room_id ? 'Room (assigned in advance)' : 'Room', required: true, value: r.room_id,
+            options: [['', 'Choose…'], ...rooms.map(x => [x.id, `${x.number} (${x.id === r.room_id ? 'assigned · ' : ''}${x.hk_status})`])] },
           { name: 'id_type', label: 'ID type', options: [['Aadhaar', 'Aadhaar'], ['Passport', 'Passport'], ['Driving licence', 'Driving licence'], ['Voter ID', 'Voter ID']], value: r.guest.id_type },
           { name: 'id_number', label: 'ID number', required: true, value: r.guest.id_number }, { name: 'nationality', label: 'Nationality', value: r.guest.nationality },
           { name: 'form_c_no', label: 'Form C no. (foreign nationals)' }], [icon('login'), 'Check in'], async v => {

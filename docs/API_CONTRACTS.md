@@ -41,6 +41,9 @@ A 403 whose message contains `needs manager approval` can be retried with `overr
 | GET /api/accounts, GET/POST /api/journals | acc (read: reports) | manual journal `{property_id,date,memo,lines:[{account_code,debit,credit}]}` |
 | GET /api/reports/{trial-balance,pnl,balance-sheet,gst,dashboard} | acc/reports | `?property_id&from&to` |
 | GET/POST /api/night-audit | audit | `?property_id` preview + history / run |
+| GET /api/reservations/:id/rooms | res | rooms of the booked type free for every night of the stay |
+| POST /api/reservations/:id/assign | res | `{room_id}` or `{room_id: null}`; only for bookings not yet checked in; 409 if the room is taken on any night |
+| POST /api/calendar/auto-assign | res | `{property_id, from, to}` → `{assigned, unassigned}`; clean rooms first, never double-books |
 | GET /api/calendar | res, rack | `?property_id&from&days` (1–31) → rooms, stays on rooms (in house / checked out) overlapping the window, per room type free rooms and arrivals per night |
 | GET /api/reports/group | reports | `?days=7\|30\|90&property_id` → per-hotel KPIs vs previous period (ranked by RevPAR), 30-night on-the-books forecast, channel mix, direct share, estimated OTA commission saved |
 | GET /api/audit-log | admin (owner only) | `?property_id`; rows include user name and role |

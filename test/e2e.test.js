@@ -71,6 +71,56 @@ test('room calendar: rooms, stays on rooms and free rooms per night', async () =
   await rejects(call('maid.amd', 'GET', '/calendar'), 403);
 });
 
+test('advance room assignment: assign, clash protection, check-in, auto-assign', async () => {
+  const bd = (await call('desk.amd', 'GET', '/me')).properties[0].business_date;
+  const av = await call('desk.amd', 'GET', `/availability?arrival=${plus(bd, 20)}&departure=${plus(bd, 23)}`);
+  const stdPlan = av.find(t => t.room_type === 'Standard').plans[0], dlxPlan = av.find(t => t.room_type === 'Deluxe').plans[0];
+  const book = (name, phone, plan, from, n) => call('desk.amd', 'POST', '/reservations', {
+    rate_plan_id: plan.rate_plan_id, arrival: plus(bd, from), departure: plus(bd, from + n), adults: 1, source: 'phone', guest: { name, phone } });
+  const a = await book('Assign Guest A', '+91 92222 00001', stdPlan, 20, 3);
+  const b = await book('Assign Guest B', '+91 92222 00002', stdPlan, 21, 2); // overlaps A
+  const free = await call('desk.amd', 'GET', `/reservations/${a.id}/rooms`);
+  assert.ok(free.length > 0 && free.every(r => r.status !== 'out_of_order'));
+  const room = free[0];
+
+  let r = await call('desk.amd', 'POST', `/reservations/${a.id}/assign`, { room_id: room.id });
+  assert.equal(r.room_id, room.id);
+  // B overlaps A: the same room is refused and no longer offered
+  await rejects(call('desk.amd', 'POST', `/reservations/${b.id}/assign`, { room_id: room.id }), 409, /taken/);
+  assert.ok(!(await call('desk.amd', 'GET', `/reservations/${b.id}/rooms`)).some(x => x.id === room.id));
+  // wrong room type is refused
+  const dlxRoom = (await call('desk.amd', 'GET', '/housekeeping')).find(x => x.room_type === 'Deluxe');
+  await rejects(call('desk.amd', 'POST', `/reservations/${a.id}/assign`, { room_id: dlxRoom.id }), 400, /room type/);
+  // the calendar shows A on its room and B waiting
+  const cal = await call('desk.amd', 'GET', `/calendar?from=${plus(bd, 19)}&days=7`);
+  assert.ok(cal.stays.some(s => s.id === a.id && s.room_id === room.id && s.status === 'booked'));
+  assert.ok(cal.unassigned.some(s => s.id === b.id));
+  // remove the room again
+  r = await call('desk.amd', 'POST', `/reservations/${a.id}/assign`, { room_id: null });
+  assert.equal(r.room_id, null);
+
+  // a booking arriving today: its pre-assigned room cannot be used to check in someone else
+  const today1 = await book('Assign Today One', '+91 92222 00003', dlxPlan, 0, 1);
+  const today2 = await book('Assign Today Two', '+91 92222 00004', dlxPlan, 0, 1);
+  const ready = (await call('desk.amd', 'GET', `/reservations/${today1.id}/rooms`)).find(x => x.status === 'available' && x.hk_status !== 'dirty');
+  await call('desk.amd', 'POST', `/reservations/${today1.id}/assign`, { room_id: ready.id });
+  await rejects(call('desk.amd', 'POST', `/reservations/${today2.id}/check-in`, { room_id: ready.id, id_type: 'Aadhaar', id_number: 'XXXX XXXX 1111' }), 409, /reserved/);
+  r = await call('desk.amd', 'POST', `/reservations/${today1.id}/check-in`, { room_id: ready.id, id_type: 'Aadhaar', id_number: 'XXXX XXXX 2222' });
+  assert.equal(r.status, 'checked_in');
+
+  // auto-assign gives rooms without ever double-booking a room
+  const out = await call('desk.amd', 'POST', '/calendar/auto-assign', { from: bd, to: plus(bd, 30) });
+  assert.ok(out.assigned > 0);
+  const after = await call('desk.amd', 'GET', `/calendar?from=${bd}&days=30`);
+  const byRoom = {};
+  for (const s of after.stays.filter(x => x.status !== 'checked_out')) (byRoom[s.room_id] ||= []).push(s);
+  for (const list of Object.values(byRoom)) {
+    list.sort((x, y) => (x.arrival < y.arrival ? -1 : 1));
+    for (let i = 1; i < list.length; i++) assert.ok(list[i - 1].departure <= list[i].arrival || list[i - 1].status === 'checked_in', `room double-booked: ${list[i - 1].code} / ${list[i].code}`);
+  }
+  await rejects(call('maid.amd', 'POST', '/calendar/auto-assign', {}), 403);
+});
+
 test('group performance: league, on-the-books forecast and channel mix', async () => {
   const g = await call('owner', 'GET', '/reports/group?days=30');
   assert.equal(g.hotels.length, 2);
@@ -155,7 +205,8 @@ test('full hotel day: check-in, charges, approvals, POS, night audit, checkout, 
   const noShow = await book('Test Guest Two', '+91 91111 00002', 'Indian', 'BAR-STD', 1);
 
   const rooms = await call('desk.amd', 'GET', '/housekeeping');
-  const room = rooms.find(r => r.room_type === 'Standard' && r.status === 'available' && r.hk_status !== 'dirty');
+  // a room free for this guest's whole stay (rooms reserved in advance for others are excluded), vacant and not dirty
+  const room = (await call('desk.amd', 'GET', `/reservations/${res.id}/rooms`)).find(r => r.status === 'available' && r.hk_status !== 'dirty');
   await rejects(call('desk.amd', 'POST', `/reservations/${res.id}/check-in`, { room_id: room.id }), 400, /id_type/);
   let r = await call('desk.amd', 'POST', `/reservations/${res.id}/check-in`, { room_id: room.id, id_type: 'Aadhaar', id_number: 'XXXX XXXX 9012' });
   assert.equal(r.status, 'checked_in');

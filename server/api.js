@@ -231,6 +231,7 @@ route('POST', '/api/reservations/:id/check-in', 'res', async c => {
     if (room.room_type_id !== r.room_type_id) throw err(400, 'Room is a different room type than booked');
     if (room.status !== 'available') throw err(409, `Room ${room.number} is ${room.status.replace('_', ' ')}`);
     if (room.hk_status === 'dirty') throw err(409, `Room ${room.number} is dirty`);
+    if ((await busyRooms(c.db, p, p.business_date, r.departure, r.id)).has(room.id)) throw err(409, `Room ${room.number} is reserved for another guest on these dates`);
     await c.db.prepare('UPDATE guests SET id_type=?, id_number=?, nationality=? WHERE id=?').run(b.id_type, String(b.id_number).trim(), nationality, g.id);
     await c.db.prepare(`UPDATE reservations SET status='checked_in', room_id=?, form_c_no=?, checked_in_at=CURRENT_TIMESTAMP WHERE id=?`).run(room.id, b.form_c_no || null, r.id);
     await c.db.prepare(`UPDATE rooms SET status='occupied' WHERE id=?`).run(room.id);
@@ -768,6 +769,67 @@ route('GET', '/api/reports/dashboard', 'reports', async c => {
   return { from, to, properties: list, group, daily, payments_by_mode };
 });
 
+// ---------- advance room assignment ----------
+// Rooms already taken between arrival and departure by another booked or in-house stay.
+// A guest still in house past their departure date keeps the room until they actually leave.
+async function busyRooms(db, p, arrival, departure, excludeId = 0) {
+  const rows = await db.prepare(`SELECT room_id, arrival, departure, status FROM reservations WHERE property_id=? AND room_id IS NOT NULL
+    AND status IN ('booked','checked_in') AND id != ?`).all(p.id, excludeId);
+  const tomorrow = addDays(p.business_date, 1), busy = new Set();
+  for (const r of rows) {
+    const leaves = r.status === 'checked_in' && r.departure < tomorrow ? tomorrow : r.departure;
+    if (r.arrival < departure && leaves > arrival) busy.add(r.room_id);
+  }
+  return busy;
+}
+// Rooms of the booked type that are free for every night of this booking (out-of-order rooms excluded).
+async function freeRoomsFor(db, p, r) {
+  const busy = await busyRooms(db, p, r.arrival, r.departure, r.id);
+  const rooms = await db.prepare(`SELECT id, number, floor, status, hk_status FROM rooms WHERE property_id=? AND room_type_id=? AND status != 'out_of_order' ORDER BY number`)
+    .all(p.id, r.room_type_id);
+  return rooms.filter(x => !busy.has(x.id));
+}
+route('GET', '/api/reservations/:id/rooms', 'res', async c => {
+  const r = await loadRes(c);
+  return freeRoomsFor(c.db, await prop(c.db, r.property_id), r);
+});
+route('POST', '/api/reservations/:id/assign', 'res', async c => {
+  const r = await loadRes(c), p = await prop(c.db, r.property_id);
+  if (r.status !== 'booked') throw err(400, `Only bookings not yet checked in can be given a room (this one is ${r.status})`);
+  return tx(c.db, async () => {
+    let room = null;
+    if (c.body.room_id) {
+      room = await c.db.prepare('SELECT * FROM rooms WHERE id=? AND property_id=?').get(Number(c.body.room_id), r.property_id);
+      if (!room) throw err(400, 'Room not found at this hotel');
+      if (room.room_type_id !== r.room_type_id) throw err(400, 'Room is a different room type than booked');
+      if (room.status === 'out_of_order') throw err(409, `Room ${room.number} is out of order`);
+      if ((await busyRooms(c.db, p, r.arrival, r.departure, r.id)).has(room.id)) throw err(409, `Room ${room.number} is taken on some of these nights`);
+    }
+    await c.db.prepare('UPDATE reservations SET room_id=? WHERE id=?').run(room?.id ?? null, r.id);
+    await audit(c.db, c.user.id, r.property_id, room ? 'reservation.assign' : 'reservation.unassign', 'reservation', r.id, { room: room?.number });
+    return resDetail(c, r.id);
+  });
+});
+// Gives every unassigned booking arriving in the window a free room, clean rooms first.
+route('POST', '/api/calendar/auto-assign', 'res', async c => {
+  const p = await prop(c.db, await pidOf(c));
+  const from = isDate(c.body.from) ? c.body.from : p.business_date, to = isDate(c.body.to) ? c.body.to : addDays(from, 14);
+  return tx(c.db, async () => {
+    const todo = await c.db.prepare(`SELECT * FROM reservations WHERE property_id=? AND status='booked' AND room_id IS NULL AND arrival >= ? AND arrival < ?
+      ORDER BY arrival, departure DESC, id`).all(p.id, from, to);
+    const rank = { inspected: 0, clean: 1, dirty: 2 };
+    let assigned = 0;
+    for (const r of todo) {
+      const free = (await freeRoomsFor(c.db, p, r)).sort((a, b) => rank[a.hk_status] - rank[b.hk_status] || a.number.localeCompare(b.number));
+      if (!free.length) continue;
+      await c.db.prepare('UPDATE reservations SET room_id=? WHERE id=?').run(free[0].id, r.id);
+      assigned++;
+    }
+    await audit(c.db, c.user.id, p.id, 'calendar.auto_assign', 'property', p.id, { from, to, assigned, waiting: todo.length - assigned });
+    return { assigned, unassigned: todo.length - assigned };
+  });
+});
+
 // ---------- room calendar (tape chart) ----------
 route('GET', '/api/calendar', ['res', 'rack'], async c => {
   const p = await prop(c.db, await pidOf(c));
@@ -778,10 +840,10 @@ route('GET', '/api/calendar', ['res', 'rack'], async c => {
     c.db.prepare(`SELECT rm.id, rm.number, rm.floor, rm.status, rm.hk_status, rm.room_type_id, t.name room_type FROM rooms rm
       JOIN room_types t ON t.id=rm.room_type_id WHERE rm.property_id=? ORDER BY t.id, rm.number`).all(p.id),
     c.db.prepare('SELECT id, code, name FROM room_types ORDER BY id').all(),
-    // stays that sit on a room: in house now, or checked out within the window
-    c.db.prepare(`SELECT r.id, r.code, r.room_id, r.arrival, r.departure, r.status, r.adults, r.source, g.name guest_name FROM reservations r
-      JOIN guests g ON g.id=r.guest_id WHERE r.property_id=? AND r.room_id IS NOT NULL AND r.status IN ('checked_in','checked_out')
-      AND r.arrival < ? AND r.departure > ?`).all(p.id, to, from),
+    // every stay in the window: on a room (booked with a room, in house, checked out) or still waiting for a room
+    c.db.prepare(`SELECT r.id, r.code, r.room_id, r.room_type_id, r.arrival, r.departure, r.status, r.adults, r.source, g.name guest_name FROM reservations r
+      JOIN guests g ON g.id=r.guest_id WHERE r.property_id=? AND r.status IN ('booked','checked_in','checked_out')
+      AND (r.room_id IS NOT NULL OR r.status='booked') AND r.arrival < ? AND r.departure > ? ORDER BY r.arrival, r.id`).all(p.id, to, from),
     // everything that needs a room, assigned or not, for the free-room counts
     c.db.prepare(`SELECT room_type_id, arrival, departure, status FROM reservations WHERE property_id=? AND status IN ('booked','checked_in')
       AND arrival < ? AND departure > ?`).all(p.id, to, from),
@@ -796,7 +858,8 @@ route('GET', '/api/calendar', ['res', 'rack'], async c => {
       arriving: nights.map(d => mine.filter(x => x.status === 'booked' && x.arrival === d).length),
     };
   }).filter(t => t.rooms);
-  return { property_id: p.id, business_date: p.business_date, from, to, days, nights, types: typeRows, rooms, stays };
+  return { property_id: p.id, business_date: p.business_date, from, to, days, nights, types: typeRows, rooms,
+    stays: stays.filter(s => s.room_id), unassigned: stays.filter(s => !s.room_id) };
 });
 
 // ---------- group performance ----------

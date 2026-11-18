@@ -26,7 +26,6 @@ code { font: 12px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace; backgr
 .shell > div { min-width: 0; } /* lets wide tables scroll instead of stretching the page */
 .scrim { display: none; }
 .billbar { display: none; }
-.tabbar, .drawer-extra, .only-mobile { display: none; }
 .only-desktop { display: contents; }
 .side { background: var(--panel); border-right: 1px solid var(--line); position: sticky; top: 0; height: 100vh; overflow-y: auto; display: flex; flex-direction: column; padding: 14px 12px; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 2px 6px 14px; color: var(--text); font-weight: 700; font-size: 15px; white-space: nowrap; }
@@ -305,6 +304,17 @@ code.clip { display: inline-block; max-width: 420px; overflow: hidden; text-over
 .tc-bar:hover { text-decoration: none; filter: brightness(1.06); box-shadow: 0 2px 8px rgb(16 24 40 / .18); }
 .tc-bar.cut-l { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: 0; }
 .tc-bar.cut-r { border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: 0; }
+.tc-bar.booked { background: var(--warn); color: #fff; cursor: pointer; }
+.tc-bar.unassigned { background: var(--warn-bg); color: var(--warn); border: 1.5px dashed var(--warn); cursor: pointer; }
+.tc-waiting { background: color-mix(in srgb, var(--warn-bg) 40%, var(--panel)); }
+.tc-waiting .tc-room { background: color-mix(in srgb, var(--warn-bg) 40%, var(--panel)); }
+.todo-swatch { background: var(--warn-bg) !important; border: 1.5px dashed var(--warn); }
+.assign-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); }
+.assign-room { display: grid; gap: 2px; justify-items: start; background: var(--panel); color: var(--text); border: 1px solid var(--line); padding: 10px 12px; }
+.assign-room:hover { background: var(--accent-soft); border-color: var(--accent); }
+.assign-room b { font-size: 16px; }
+.assign-room small { color: var(--muted); font-weight: 500; text-transform: capitalize; }
+.assign-room.on { border-color: var(--accent); background: var(--accent-soft); cursor: default; }
 .tc-row.ooo .tc-cell { background: repeating-linear-gradient(135deg, var(--bad-bg) 0 6px, transparent 6px 12px); }
 .ooo-swatch { background: repeating-linear-gradient(135deg, var(--bad) 0 2px, var(--bad-bg) 2px 4px) !important; }
 .hk-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
@@ -586,22 +596,14 @@ button.big { width: 100%; padding: 12px; font-size: 15px; }
   .list-row .amt { text-align: left; }
   dialog { width: calc(100vw - 16px); max-height: 92vh; overflow: auto; padding: 16px; }
   #flash { left: 12px; right: 12px; bottom: 12px; }
-  .billbar { display: flex; bottom: calc(72px + env(safe-area-inset-bottom)); }
+  .billbar { display: flex; bottom: calc(12px + env(safe-area-inset-bottom)); }
   .only-mobile { display: contents; }
   .only-desktop { display: none; }
   .drawer-extra { display: block; margin-top: 8px; }
   .drawer-extra a { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; color: var(--text-2); font-weight: 500; }
   .drawer-extra a .ic { color: var(--muted); }
-  .tabbar { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; position: fixed; z-index: 40; left: 0; right: 0; bottom: 0;
-    background: var(--panel); border-top: 1px solid var(--line); padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); box-shadow: 0 -4px 16px rgb(16 24 40 / .06); }
-  .tabbar a, .tabbar button { all: unset; box-sizing: border-box; cursor: pointer; display: grid; justify-items: center; gap: 3px; padding: 4px 2px; border-radius: 10px;
-    color: var(--muted); font-size: 11px; font-weight: 600; text-align: center; min-height: 48px; align-content: center; }
-  .tabbar .ic { width: 22px; height: 22px; }
-  .tabbar a:hover, .tabbar button:hover { background: var(--line-2); color: var(--text); box-shadow: none; }
-  .tabbar a.active { color: var(--accent); background: var(--accent-soft); }
-  .tabbar a:focus-visible, .tabbar button:focus-visible { outline: 2px solid var(--accent); }
-  main { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
-  #flash { bottom: calc(80px + env(safe-area-inset-bottom)); }
+  main { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  #flash { bottom: calc(12px + env(safe-area-inset-bottom)); }
   .login-page { grid-template-columns: 1fr; }
   .login-hero { padding: 28px 20px; }
   .login-hero h1 { font-size: 26px; }

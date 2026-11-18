@@ -112,5 +112,13 @@
   (counts bookings not yet given a room), stays as bars (in house / checked out), today highlighted, weekends shaded, out-of-order rooms striped,
   housekeeping dot per room. Starts 2 days back; ←/Today/→ and 7/14/30 days. Clicking a free night opens New booking with that arrival date.
 - Bookings only get a room at check-in, so future stays show in the free counts, not as bars (pre-assigning rooms would be a separate feature).
-- Verified: `npm test` 11/11; browser desktop (60 rooms, 30 in-house bars, click-to-book prefill) and phone (no page overflow, chart scrolls sideways). Foreign-key enforcement on Turso connections is not guaranteed;
+- Verified: `npm test` 11/11; browser desktop (60 rooms, 30 in-house bars, click-to-book prefill) and phone (no page overflow, chart scrolls sideways).
+
+## 2026-11-18 - advance room assignment + phone menu
+- `GET /api/reservations/:id/rooms` (rooms free for the whole stay), `POST /api/reservations/:id/assign` (room or null), `POST /api/calendar/auto-assign`
+  (clean rooms first). `busyRooms` treats an in-house guest past departure as still occupying the room; check-in refuses a room reserved for someone else.
+- Calendar: booked bars (amber) on rooms, "To assign" lanes (dashed), assign/move/remove dialog, Auto-assign button. Check-in pre-selects the assigned room.
+- Phone: bottom tab bar removed; navigation is the ☰ slide-in menu only.
+- Verified: `npm test` 12/12 (new: assign, clash refusals, wrong type, check-in protection, auto-assign never double-books, housekeeper 403);
+  browser: dialog offered 18 rooms, assigning moved the stay onto room 203; phone drawer shows every section, no bottom bar. Foreign-key enforcement on Turso connections is not guaranteed;
   the app validates references itself.
