@@ -144,6 +144,7 @@ const ICONS = {
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
   menu: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
   bars: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  tape: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/><path d="M12 14h6" stroke-width="3"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   login: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/>',
   bed: '<path d="M2 4v16M2 8h17a3 3 0 0 1 3 3v9M2 17h20M6 8v9"/>',
@@ -169,7 +170,7 @@ store.set('erp.theme', null); // the app is light-only; forget any old choice
 // [key, label, permission(s), icon]
 const NAV = [
   ['Overview', [['dashboard', 'Dashboard', 'reports', 'dashboard'], ['performance', 'Performance', 'reports', 'trend']]],
-  ['Front office', [['frontdesk', 'Front desk', 'res', 'bell'], ['reservations', 'Reservations', 'res', 'calendar'], ['guests', 'Guests', 'res', 'users']]],
+  ['Front office', [['frontdesk', 'Front desk', 'res', 'bell'], ['calendar', 'Room calendar', ['res', 'rack'], 'tape'], ['reservations', 'Reservations', 'res', 'calendar'], ['guests', 'Guests', 'res', 'users']]],
   ['Operations', [['housekeeping', 'Housekeeping', ['hk', 'rack'], 'sparkle'], ['maintenance', 'Maintenance', ['mt', 'hk', 'rack'], 'wrench'], ['pos', 'Restaurant POS', 'pos', 'utensils']]],
   ['Back office', [['inventory', 'Inventory', ['inv', 'po'], 'box'], ['purchasing', 'Purchasing', ['po', 'inv', 'acc'], 'cart'], ['accounts', 'Accounts & GST', ['acc', 'books'], 'rupee']]],
   ['Admin', [['night-audit', 'Night audit', 'audit', 'moon'], ['setup', 'Setup', ['admin', 'rates', 'menu'], 'gear'], ['audit-log', 'Audit log', 'admin', 'shield']]],
@@ -314,7 +315,7 @@ async function render() {
   try { main.replaceChildren(await VIEWS[view](arg && decodeURIComponent(arg))); } catch (e) { main.replaceChildren(h('p', { class: 'error' }, e.message)); }
 }
 window.addEventListener('hashchange', render);
-const ONE_HOTEL = new Set(['frontdesk', 'booking', 'housekeeping', 'pos', 'inventory', 'night-audit']);
+const ONE_HOTEL = new Set(['frontdesk', 'calendar', 'booking', 'housekeeping', 'pos', 'inventory', 'night-audit']);
 function useHotel(id) {
   S.all = false; S.pid = id; store.set('erp.pid', id);
   const sel = document.querySelector('select.hotel'); if (sel) sel.value = id;
@@ -555,6 +556,81 @@ async function performance() {
       + `OTA commission saved is an estimate: direct room revenue × ${Math.round(d.ota_commission_rate * 100)}%.`));
 }
 
+// ---------- room calendar (tape chart) ----------
+const weekday = d => new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short' });
+const isWeekend = d => [0, 6].includes(new Date(d + 'T00:00:00').getDay());
+const STAY = { checked_in: 'In house', checked_out: 'Checked out' };
+
+async function roomCalendar() {
+  const p = curProp();
+  const days = S.calDays || 14;
+  const from = S.calFrom || addDays(p.business_date, -2); // a little history so recent arrivals and departures show
+  const d = await api('GET', `/calendar?property_id=${p.id}&from=${from}&days=${days}`);
+  const typeFilter = qs().get('type') || '';
+  const shift = n => { S.calFrom = addDays(from, n); render(); };
+  const canBook = can('res');
+  const cols = `grid-template-columns: minmax(92px, 118px) repeat(${days}, minmax(${days > 14 ? 38 : 50}px, 1fr))`;
+  const dayCell = (n, i, extra = '', kids = []) => h('div', { class: `tc-cell${isWeekend(n) ? ' we' : ''}${n === d.business_date ? ' today' : ''}${extra}`, style: `grid-column:${i + 2}` }, kids);
+
+  const tonight = d.nights.indexOf(d.business_date);
+  const inHouse = d.rooms.filter(r => r.status === 'occupied').length; // independent of which dates are on screen
+  const freeTonight = tonight >= 0 ? d.types.reduce((s, t) => s + t.free[tonight], 0) : null;
+
+  const head = h('div', { class: 'tc-row tc-head', style: cols },
+    h('div', { class: 'tc-room' }, 'Room'),
+    d.nights.map((n, i) => dayCell(n, i, '', [h('small', {}, weekday(n)), h('b', {}, new Date(n + 'T00:00:00').getDate())])));
+
+  const groups = d.types.filter(t => !typeFilter || String(t.id) === typeFilter).map(t => {
+    const typeRow = h('div', { class: 'tc-row tc-type', style: cols },
+      h('div', { class: 'tc-room' }, h('strong', {}, t.name), h('small', {}, `${t.rooms} rooms`)),
+      d.nights.map((n, i) => {
+        const free = t.free[i];
+        const label = h('span', { class: `tc-free${free <= 0 ? ' full' : free <= 2 ? ' low' : ''}`, title: `${t.name} on ${dayLabel(n)}: ${free} free${t.arriving[i] ? `, ${t.arriving[i]} arriving` : ''}` }, free <= 0 ? 'Full' : free);
+        return dayCell(n, i, canBook && free > 0 && n >= d.business_date ? ' bookable' : '', [canBook && free > 0 && n >= d.business_date
+          ? h('a', { href: `#/booking?arrival=${n}`, 'aria-label': `New booking arriving ${dayLabel(n)}, ${free} ${t.name} free` }, label) : label]);
+      }));
+    const roomRows = d.rooms.filter(r => r.room_type_id === t.id).map(r => {
+      const bars = d.stays.filter(s => s.room_id === r.id).map(s => {
+        const start = s.arrival < d.from ? d.from : s.arrival, end = s.departure > d.to ? d.to : s.departure;
+        const col = nights(d.from, start) + 2, span = Math.max(1, nights(start, end));
+        const clippedL = s.arrival < d.from, clippedR = s.departure > d.to;
+        return h('a', { class: `tc-bar ${s.status}${clippedL ? ' cut-l' : ''}${clippedR ? ' cut-r' : ''}`, href: can('res') ? '#/res/' + s.id : null,
+          style: `grid-column:${col} / span ${span}`, title: `${s.guest_name} · ${STAY[s.status]} · ${dayLabel(s.arrival)} → ${dayLabel(s.departure)} · ${s.code}` },
+        h('span', {}, s.guest_name));
+      });
+      return h('div', { class: `tc-row${r.status === 'out_of_order' ? ' ooo' : ''}`, style: cols },
+        h('div', { class: 'tc-room' }, h('strong', {}, r.number),
+          h('span', { class: `hk-dot ${r.hk_status}`, title: `Housekeeping: ${r.hk_status}` }),
+          r.status === 'out_of_order' && h('span', { class: 'tag bad' }, 'OOO')),
+        d.nights.map((n, i) => dayCell(n, i)), bars);
+    });
+    return [typeRow, ...roomRows];
+  });
+
+  return h('div', {},
+    pageHead('Room calendar', `${p.name} · ${dayLabel(d.from)} – ${dayLabel(addDays(d.to, -1))}`,
+      h('div', { class: 'row' },
+        h('button', { class: 'ghost small', 'aria-label': `Back ${days} days`, onclick: () => shift(-days) }, '←'),
+        h('button', { class: 'ghost small', onclick: () => { S.calFrom = null; render(); } }, 'Today'),
+        h('button', { class: 'ghost small', 'aria-label': `Forward ${days} days`, onclick: () => shift(days) }, '→'),
+        h('div', { class: 'seg', role: 'group', 'aria-label': 'Days shown' }, [7, 14, 30].map(n => h('button', { class: n === days ? 'on' : '', onclick: () => { S.calDays = n; render(); } }, `${n} days`))))),
+    statStrip([
+      ['Rooms', d.rooms.length, `${d.rooms.filter(r => r.status === 'out_of_order').length} out of order`, 'building', 'indigo'],
+      ['In house', inHouse, 'guests in rooms now', 'bed', 'teal'],
+      freeTonight !== null && ['Free tonight', freeTonight, 'after today\'s arrivals', 'sparkle', 'green'],
+      tonight >= 0 && ['Arriving today', d.types.reduce((s, t) => s + t.arriving[tonight], 0), 'not checked in yet', 'calendar', 'amber'],
+    ]),
+    h('div', { class: 'toolbar' },
+      pills([['', 'All room types'], ...d.types.map(t => [String(t.id), t.name])], typeFilter, k => setQs('#/calendar', { type: k })),
+      h('span', { class: 'spacer' }),
+      h('div', { class: 'legend' }, h('span', {}, h('i', { style: 'background:var(--accent)' }), 'In house'), h('span', {}, h('i', { style: 'background:#cbd5e1' }), 'Checked out'),
+        h('span', {}, h('i', { class: 'ooo-swatch' }), 'Out of order'), h('span', {}, h('i', { style: 'background:var(--warn-bg);border:1px solid var(--warn)' }), 'Today'))),
+    h('section', { class: 'panel' },
+      h('div', { class: 'tc-wrap' }, h('div', { class: 'tc' }, head, groups))),
+    h('p', { class: 'muted small' }, 'The number on each room-type line is how many rooms of that type are still free that night, counting bookings not yet given a room.'
+      + (canBook ? ' Click a free night to start a booking for that date.' : '') + ' Click a stay to open it.'));
+}
+
 // ---------- front desk ----------
 const resLink = r => h('a', { href: '#/res/' + r.id }, r.code);
 const roomLegend = () => h('div', { class: 'legend' }, [['var(--ok)', 'Vacant'], ['var(--accent)', 'Occupied'], ['var(--bad)', 'Out of order'], ['var(--warn)', 'Dirty']]
@@ -613,6 +689,8 @@ async function reservations() {
 
 async function booking() {
   const p = curProp();
+  const asked = qs().get('arrival'); // from the room calendar
+  const startDate = asked && /^\d{4}-\d{2}-\d{2}$/.test(asked) && asked >= p.business_date ? asked : p.business_date;
   const results = h('div');
   const steps = n => h('div', { class: 'stepper' }, ['Dates', 'Room & rate', 'Guest details'].map((l, i) => h('div', { class: i < n ? 'done' : i === n ? 'on' : '' }, h('span', {}, i < n ? '✓' : i + 1), l)));
   const stepBox = h('div', {}, steps(0));
@@ -664,8 +742,8 @@ async function booking() {
       })), summary));
   };
   return h('div', {}, pageHead('New booking', p.name, h('a', { class: 'btn ghost', href: '#/reservations' }, 'All reservations')), stepBox,
-    panel('Stay dates', null, form([{ name: 'arrival', label: 'Arrival', type: 'date', value: p.business_date, required: true },
-      { name: 'departure', label: 'Departure', type: 'date', value: addDays(p.business_date, 1), required: true },
+    panel('Stay dates', null, form([{ name: 'arrival', label: 'Arrival', type: 'date', value: startDate, required: true },
+      { name: 'departure', label: 'Departure', type: 'date', value: addDays(startDate, 1), required: true },
       { name: 'adults', label: 'Adults', type: 'number', value: 2, min: 1 }], [icon('search'), 'Check availability'], search)), results);
 }
 
@@ -1319,7 +1397,7 @@ async function auditLog() {
 }
 
 const VIEWS = {
-  dashboard, performance, frontdesk, reservations, booking, res, invoice, guests, guest, housekeeping, maintenance, pos, order, inventory, purchasing,
+  dashboard, performance, frontdesk, calendar: roomCalendar, reservations, booking, res, invoice, guests, guest, housekeeping, maintenance, pos, order, inventory, purchasing,
   accounts, 'night-audit': nightAudit, setup, 'audit-log': auditLog,
 };
 boot();

@@ -768,6 +768,37 @@ route('GET', '/api/reports/dashboard', 'reports', async c => {
   return { from, to, properties: list, group, daily, payments_by_mode };
 });
 
+// ---------- room calendar (tape chart) ----------
+route('GET', '/api/calendar', ['res', 'rack'], async c => {
+  const p = await prop(c.db, await pidOf(c));
+  const from = isDate(c.query.from) ? c.query.from : p.business_date;
+  const days = Math.min(Math.max(Number(c.query.days) || 14, 1), 31);
+  const to = addDays(from, days); // exclusive
+  const [rooms, types, stays, demand] = await Promise.all([
+    c.db.prepare(`SELECT rm.id, rm.number, rm.floor, rm.status, rm.hk_status, rm.room_type_id, t.name room_type FROM rooms rm
+      JOIN room_types t ON t.id=rm.room_type_id WHERE rm.property_id=? ORDER BY t.id, rm.number`).all(p.id),
+    c.db.prepare('SELECT id, code, name FROM room_types ORDER BY id').all(),
+    // stays that sit on a room: in house now, or checked out within the window
+    c.db.prepare(`SELECT r.id, r.code, r.room_id, r.arrival, r.departure, r.status, r.adults, r.source, g.name guest_name FROM reservations r
+      JOIN guests g ON g.id=r.guest_id WHERE r.property_id=? AND r.room_id IS NOT NULL AND r.status IN ('checked_in','checked_out')
+      AND r.arrival < ? AND r.departure > ?`).all(p.id, to, from),
+    // everything that needs a room, assigned or not, for the free-room counts
+    c.db.prepare(`SELECT room_type_id, arrival, departure, status FROM reservations WHERE property_id=? AND status IN ('booked','checked_in')
+      AND arrival < ? AND departure > ?`).all(p.id, to, from),
+  ]);
+  const nights = nightsBetween(from, to);
+  const typeRows = types.map(t => {
+    const sellable = rooms.filter(r => r.room_type_id === t.id && r.status !== 'out_of_order').length;
+    const mine = demand.filter(x => x.room_type_id === t.id);
+    return {
+      id: t.id, code: t.code, name: t.name, rooms: rooms.filter(r => r.room_type_id === t.id).length,
+      free: nights.map(d => sellable - mine.filter(x => x.arrival <= d && x.departure > d).length),
+      arriving: nights.map(d => mine.filter(x => x.status === 'booked' && x.arrival === d).length),
+    };
+  }).filter(t => t.rooms);
+  return { property_id: p.id, business_date: p.business_date, from, to, days, nights, types: typeRows, rooms, stays };
+});
+
 // ---------- group performance ----------
 const OTA_COMMISSION = 0.18; // shortcut: assumed typical OTA commission for the "saved" estimate; make it a setting if rates are negotiated per OTA
 const CHANNEL = { website: 'website', ota: 'ota', phone: 'phone', central: 'phone', walk_in: 'walk_in' }; // phone + central desk shown together

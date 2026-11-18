@@ -51,6 +51,26 @@ test('seeded history: books balance and the dashboard has real numbers', async (
   assert.ok(pending.length >= 1);
 });
 
+test('room calendar: rooms, stays on rooms and free rooms per night', async () => {
+  const cal = await call('desk.amd', 'GET', '/calendar?days=14');
+  assert.equal(cal.nights.length, 14);
+  assert.equal(cal.from, cal.business_date);
+  assert.equal(cal.rooms.length, 60);
+  const roomIds = new Set(cal.rooms.map(r => r.id));
+  for (const s of cal.stays) {
+    assert.ok(roomIds.has(s.room_id), 'every bar sits on a room of this hotel');
+    assert.ok(s.arrival < cal.to && s.departure > cal.from, 'every bar overlaps the window');
+  }
+  for (const t of cal.types) {
+    assert.equal(t.free.length, 14);
+    assert.ok(t.free.every(f => f <= t.rooms), 'never more free rooms than exist');
+  }
+  const later = await call('desk.amd', 'GET', `/calendar?days=7&from=${plus(cal.business_date, 7)}`);
+  assert.equal(later.from, plus(cal.business_date, 7));
+  assert.equal((await call('revenue', 'GET', '/calendar?property_id=2')).rooms.length, 48);
+  await rejects(call('maid.amd', 'GET', '/calendar'), 403);
+});
+
 test('group performance: league, on-the-books forecast and channel mix', async () => {
   const g = await call('owner', 'GET', '/reports/group?days=30');
   assert.equal(g.hotels.length, 2);

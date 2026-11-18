@@ -105,5 +105,12 @@
   (18% assumption, `OTA_COMMISSION` in server/api.js). Defaults to 7 days so comparisons have data; "no earlier data" when the previous period is empty.
 - Verified: `npm test` 10/10 (new test checks ranking, forecast bounds, shares = 100%, commission maths, GM scoping, front-desk 403);
   browser desktop + 375px phone.
-- Earlier note "Not verified: a real Turso database or a real Vercel deploy" no longer applies. Foreign-key enforcement on Turso connections is not guaranteed;
+- Earlier note "Not verified: a real Turso database or a real Vercel deploy" no longer applies.
+
+## 2026-11-18 - Room calendar (tape chart)
+- `GET /api/calendar` + **Room calendar** screen (front office; one hotel at a time): rooms grouped by type, a free-rooms line per type per night
+  (counts bookings not yet given a room), stays as bars (in house / checked out), today highlighted, weekends shaded, out-of-order rooms striped,
+  housekeeping dot per room. Starts 2 days back; ←/Today/→ and 7/14/30 days. Clicking a free night opens New booking with that arrival date.
+- Bookings only get a room at check-in, so future stays show in the free counts, not as bars (pre-assigning rooms would be a separate feature).
+- Verified: `npm test` 11/11; browser desktop (60 rooms, 30 in-house bars, click-to-book prefill) and phone (no page overflow, chart scrolls sideways). Foreign-key enforcement on Turso connections is not guaranteed;
   the app validates references itself.
