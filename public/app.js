@@ -144,7 +144,6 @@ const ICONS = {
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
   menu: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
   bars: '<path d="M4 6h16M4 12h16M4 18h16"/>',
-  contrast: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18a9 9 0 0 0 0-18z" fill="currentColor"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   login: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/>',
   bed: '<path d="M2 4v16M2 8h17a3 3 0 0 1 3 3v9M2 17h20M6 8v9"/>',
@@ -165,8 +164,7 @@ const initials = name => name.split(/\s+/).filter(Boolean).map(w => w[0]).slice(
 const short = p => { const r = (p || 0) / 100, a = Math.abs(r); return '₹' + (a >= 1e7 ? (r / 1e7).toFixed(2) + 'Cr' : a >= 1e5 ? (r / 1e5).toFixed(1) + 'L' : a >= 1e3 ? (r / 1e3).toFixed(1) + 'K' : r.toFixed(0)); };
 const dayLabel = d => new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 
-const setTheme = t => { document.documentElement.dataset.theme = t; store.set('erp.theme', t); };
-setTheme(store.get('erp.theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+store.set('erp.theme', null); // the app is light-only; forget any old choice
 
 // [key, label, permission(s), icon]
 const NAV = [
@@ -236,7 +234,6 @@ async function boot() {
     h('aside', { class: 'side' }, brand(), nav,
       h('div', { class: 'drawer-extra' }, h('div', { class: 'group' }, 'More'),
         h('a', { href: '/book', target: '_blank' }, icon('globe'), h('span', {}, 'Booking website')),
-        h('a', { href: '#', onclick: e => { e.preventDefault(); setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'); } }, icon('contrast'), h('span', {}, 'Light / dark mode')),
         h('a', { href: '#', onclick: e => { e.preventDefault(); act(signOut)(); } }, icon('logout'), h('span', {}, 'Sign out'))),
       h('div', { class: 'foot' }, h('span', { class: 'avatar' }, initials(u.name)), h('div', { class: 'who' }, h('strong', {}, u.name), h('span', { class: 'muted', style: 'text-transform:capitalize' }, role)))),
     h('div', { class: 'scrim', onclick: () => document.querySelector('.shell').classList.remove('nav-open') }),
@@ -250,7 +247,6 @@ async function boot() {
         } }, h('span', { class: 'only-desktop' }, icon('menu')), h('span', { class: 'only-mobile' }, icon('bars'))),
         h('div', { class: 'crumb' }, hotel, h('span', { class: 'sep' }, '/'), h('strong', { id: 'crumb' })),
         h('span', { class: 'pill-date', id: 'bd' }), h('span', { class: 'spacer' }), searchBox(),
-        h('button', { class: 'iconbtn', 'aria-label': 'Switch light or dark mode', title: 'Light / dark', onclick: () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark') }, icon('contrast')),
         menu),
       h('main', { id: 'main' }))));
   render();
