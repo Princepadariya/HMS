@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grand Residency Hotels</title>
+  <meta name="description" content="Book direct at Grand Residency Hotels in Ahmedabad and Vadodara. Best rate guaranteed, no prepayment.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="site">
+  <header class="site-hero">
+    <div class="inner">
+      <nav class="site-nav" aria-label="Main">
+        <a class="brand" href="/book"><span class="logo" aria-hidden="true">G</span><span>Grand Residency<small>Hotels</small></span></a>
+        <span class="spacer"></span>
+        <a href="#hotels">Our hotels</a>
+        <a href="#search" class="nav-cta">Book a stay</a>
+      </nav>
+      <h1>Stay in the heart of Gujarat, at the best direct rate.</h1>
+      <p>Comfortable rooms, home-style Gujarati food and warm service in Ahmedabad and Vadodara.</p>
+      <ul class="trust">
+        <li>Best rate when you book direct</li>
+        <li>No prepayment — pay at the hotel</li>
+        <li>Free cancellation up to 24h before</li>
+      </ul>
+    </div>
+  </header>
+
+  <main class="site-body">
+    <div class="card search-card" id="search">
+      <form id="search-form" class="search-grid">
+        <label>Hotel <select name="property_id" id="hotel" required></select></label>
+        <label>Check-in <input type="date" name="arrival" required></label>
+        <label>Check-out <input type="date" name="departure" required></label>
+        <label>Guests
+          <select name="adults">
+            <option value="1">1 adult</option><option value="2" selected>2 adults</option>
+            <option value="3">3 adults</option><option value="4">4 adults</option>
+          </select>
+        </label>
+        <button type="submit">Check availability</button>
+      </form>
+      <p class="muted nights" id="nights"></p>
+    </div>
+
+    <ol class="steps" id="steps" hidden>
+      <li data-step="0">Choose room</li>
+      <li data-step="1">Your details</li>
+      <li data-step="2">Confirmed</li>
+    </ol>
+
+    <div class="book-layout" id="book-layout" hidden>
+      <div id="out" aria-live="polite"></div>
+      <aside class="summary card" id="summary" aria-label="Your stay"></aside>
+    </div>
+
+    <section id="hotels" class="hotels" aria-label="Our hotels"></section>
+
+    <div class="perks">
+      <div><strong>Best rate guaranteed</strong>Booking direct is always cheapest — no OTA commission.</div>
+      <div><strong>No prepayment</strong>Reserve now and pay at the hotel by cash, card or UPI.</div>
+      <div><strong>GST invoice</strong>Add your company GSTIN at check-out for a B2B tax invoice.</div>
+    </div>
+  </main>
+  <footer class="site-foot">© Grand Residency Hotels · Ahmedabad · Vadodara</footer>
+  <script src="book.js"></script>
+</body>
+</html>
